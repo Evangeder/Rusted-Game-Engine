@@ -1,0 +1,9 @@
+[package]
+name = "triangle"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+platform = { path = "../../crates/platform" }
+gfx-wgpu = { path = "../../crates/gfx-wgpu" }
+winit = "0.30.12"

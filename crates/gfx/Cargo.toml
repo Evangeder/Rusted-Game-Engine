@@ -1,0 +1,9 @@
+[features]
+wgpu = ["dep:gfx-wgpu"]
+vulkan = ["dep:gfx-vulkan"]
+dx12 = ["dep:gfx-dx12"]
+
+[dependencies]
+gfx-wgpu = { path = "../gfx-wgpu", optional = true }
+gfx-vulkan = { path = "../gfx-vulkan", optional = true }
+gfx-dx12 = { path = "../gfx-dx12", optional = true }
