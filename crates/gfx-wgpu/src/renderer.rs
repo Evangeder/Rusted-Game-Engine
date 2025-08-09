@@ -4,6 +4,8 @@ use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use crate::{Camera, CameraUBO};
 use crate::depth::create_depth_view;
 use crate::types::{Vertex, DEPTH_FORMAT, GResult};
+use shader_core::{WgslSource, RenderState, Topology, Overrides, ShaderKey};
+use crate::pipeline_cache::PipelineCache;
 
 pub struct Renderer {
     pub surface: wgpu::Surface<'static>,
@@ -20,6 +22,11 @@ pub struct Renderer {
     cam_bg: wgpu::BindGroup,
 
     camera: Camera,
+
+    pipeline_cache: PipelineCache,
+    pipeline_layout: wgpu::PipelineLayout,
+    shader_src: WgslSource,
+    current_overrides: Overrides,
 }
 
 impl Renderer {
@@ -88,6 +95,12 @@ impl Renderer {
             }],
         });
 
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("pipeline_layout"),
+            bind_group_layouts: &[&camera_bgl],
+            push_constant_ranges: &[],
+        });
+
         let cam_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("camera_ubo"),
             size: std::mem::size_of::<CameraUBO>() as u64,
@@ -105,10 +118,10 @@ impl Renderer {
         });
 
         // Shader + pipeline
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("triangle.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/triangle.wgsl").into()),
-        });
+        let shader_src = WgslSource {
+            name: "triangle.wgsl",
+            code: include_str!("../shaders/triangle.wgsl"),
+        };
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pipeline_layout"),
@@ -116,37 +129,25 @@ impl Renderer {
             push_constant_ranges: &[],
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::layout()],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        let state = RenderState {
+            format,
+            depth: true,
+            msaa: 1,
+            topo: Topology::TriangleList,
+        };
+
+        let mut pipeline_cache = PipelineCache::new();
+        let overrides = Overrides::default(); // startowo bez fog/tint
+        let key = ShaderKey::new(&shader_src, state, &overrides);
+        let pipeline = pipeline_cache.get_or_create(
+            key,
+            &device,
+            &pipeline_layout,
+            &shader_src,
+            &state,
+            &overrides,
+            &[Vertex::layout()]
+        ).clone();
 
         // Vertex buffer
         let verts: [Vertex; 3] = [
@@ -168,6 +169,10 @@ impl Renderer {
             pipeline, vbuf, vcount,
             depth_view, cam_buf, cam_bg,
             camera,
+            pipeline_cache,
+            pipeline_layout,
+            shader_src,
+            current_overrides: overrides,
         }
     }
 
@@ -258,5 +263,29 @@ impl Renderer {
         let aspect = self.config.width as f32 / self.config.height as f32;
         let ubo = self.camera.make_mvp(aspect, t);
         self.queue.write_buffer(&self.cam_buf, 0, bytemuck::bytes_of(&ubo));
+    }
+
+    pub fn rebuild_pipeline(&mut self, overrides: Overrides, topo: Topology) {
+        self.current_overrides = overrides.clone();
+
+        let state = RenderState {
+            format: self.config.format,
+            depth: true,
+            msaa: 1,
+            topo,
+        };
+        let key = ShaderKey::new(&self.shader_src, state, &self.current_overrides);
+
+        let p = self.pipeline_cache.get_or_create(
+            key,
+            &self.device,
+            &self.pipeline_layout,
+            &self.shader_src,
+            &state,
+            &self.current_overrides,
+            &[crate::types::Vertex::layout()],
+        ).clone();
+
+        self.pipeline = p;
     }
 }

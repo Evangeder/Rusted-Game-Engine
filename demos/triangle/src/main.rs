@@ -14,6 +14,7 @@ struct Demo {
     rot_speed: f32,
     angle: f32,
     last_frame: Instant,
+    fog: bool,
 }
 
 impl Demo {
@@ -26,6 +27,7 @@ impl Demo {
             rot_speed: 1.0,
             angle: 0.0,
             last_frame: Instant::now(),
+            fog: false,
         }
     }
 }
@@ -41,7 +43,13 @@ impl ApplicationHandler for Demo {
         self.inner.resumed(el);
         el.set_control_flow(ControlFlow::Poll);
         if let Some(win) = &self.inner.window {
-            let renderer = gfx_wgpu::Renderer::new(win);
+            let mut renderer = gfx_wgpu::Renderer::new(win);
+            let mut ov = shader_core::Overrides::default();
+            ov.set_bool("USE_FOG", true);
+            ov.set_f32("TINT_R", 1.0);
+            ov.set_f32("TINT_G", 0.9);
+            ov.set_f32("TINT_B", 0.9);
+            renderer.rebuild_pipeline(ov, shader_core::Topology::TriangleList);
             let ui = gfx_wgpu::UiLayer::new(
                 win,
                 &renderer.device,
@@ -67,23 +75,40 @@ impl ApplicationHandler for Demo {
                     let now = Instant::now();
                     let delta_time = now.duration_since(self.last_frame).as_secs_f32();
                     self.last_frame = now;
+
                     let mut local_speed = self.rot_speed;
                     let device = renderer.device.clone();
                     let queue  = renderer.queue.clone();
+
+                    let mut apply_overrides = false;
 
                     let _ = renderer.render_with(|enc, view| {
                         ui.build_and_render(
                             win, &device, &queue, enc, view,
                             |ui| {
                                 ui.slider("Delta Time Scale", 0.0, 5.0, &mut local_speed);
+                                ui.checkbox("Fog", &mut self.fog);
+                                if ui.button("Apply shader overrides") {
+                                    apply_overrides = true;
+                                }
                             }
                         );
                     });
+
+                    if apply_overrides {
+                        let mut ov = shader_core::Overrides::default();
+                        ov.set_bool("USE_FOG", self.fog);
+                        ov.set_f32("TINT_R", 1.0);
+                        ov.set_f32("TINT_G", 0.9);
+                        ov.set_f32("TINT_B", 0.9);
+                        renderer.rebuild_pipeline(ov, shader_core::Topology::TriangleList);
+                    }
 
                     self.rot_speed = local_speed;
                     self.angle += delta_time * self.rot_speed;
                     renderer.update_camera(self.angle);
                 }
+
                 WindowEvent::Occluded(false) | WindowEvent::Focused(true) => win.request_redraw(),
                 _ => {}
             }

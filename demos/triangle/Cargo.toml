@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 platform = { path = "../../crates/platform" }
 gfx-wgpu = { path = "../../crates/gfx-wgpu" }
+shader-core = { path = "../../crates/shader-core" }
 winit = "0.30.12"
 
 [[bin]]
