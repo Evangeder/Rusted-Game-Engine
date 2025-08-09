@@ -1,7 +1,5 @@
-use glam::Vec3;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
-use crate::{Camera, CameraUBO};
 use crate::depth::create_depth_view;
 use crate::types::{Vertex, GResult};
 use crate::pipeline_cache::PipelineCache;
