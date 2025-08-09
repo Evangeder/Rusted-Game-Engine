@@ -19,6 +19,28 @@ A modular game engine written in Rust — just for fun and learning. This guide 
 4. [Vulkan SDK](https://vulkan.lunarg.com/sdk/home#windows)
 5. [Visual Studio 2022 or higher](https://visualstudio.microsoft.com/pl/downloads)
 	- MSVC C++ Packages for all architectures, prefferably latest ones
+6. IDE of your liking, i use VS Code
+    - Install Rust and WGSL addons
+
+
+## Setting up
+
+Before building, run those commands once:
+```
+rustup component add rust-analyzer clippy rustfmt
+cargo clippy --all-targets -- -D warnings
+cargo fmt
+rustup target add x86_64-pc-windows-msvc
+rustup target add x86_64-unknown-linux-gnu
+rustup target add aarch64-apple-darwin
+```
+
+Essentially, this installs optional Rust components:
+* `rust-analyzer` - smart code analysis & completion for editors like VS Code,
+* `clippy` - linter that catches common mistakes and suggests idiomatic Rust.
+    * Clippy runs on all targets (bins, tests, examples) and treats warnings as errors (forces clean code).
+* `rustfmt` - automatic code formatter.
+And adds targets for cross-compilation for Windows, Linux and Mac.
 
 ## Building
 
