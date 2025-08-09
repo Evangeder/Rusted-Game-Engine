@@ -7,3 +7,8 @@ edition = "2021"
 platform = { path = "../../crates/platform" }
 gfx-wgpu = { path = "../../crates/gfx-wgpu" }
 winit = "0.30.12"
+
+[[bin]]
+name = "triangle"
+path = "src/main.rs"
+windows_subsystem = "windows"
