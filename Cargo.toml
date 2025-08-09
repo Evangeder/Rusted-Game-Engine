@@ -2,6 +2,7 @@
 members = [
   "crates/platform",
   "crates/gfx-wgpu",
+  "crates/shader-core",
   "demos/triangle",
 ]
 resolver = "2"

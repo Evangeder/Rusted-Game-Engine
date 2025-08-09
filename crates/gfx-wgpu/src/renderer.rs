@@ -3,8 +3,7 @@ use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::{Camera, CameraUBO};
 use crate::depth::create_depth_view;
-use crate::types::{Vertex, DEPTH_FORMAT, GResult};
-use shader_core::{WgslSource, RenderState, Topology, Overrides, ShaderKey};
+use crate::types::{Vertex, GResult};
 use crate::pipeline_cache::PipelineCache;
 
 pub struct Renderer {
@@ -13,7 +12,7 @@ pub struct Renderer {
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
 
-    pipeline: wgpu::RenderPipeline,
+    pipeline: Option<wgpu::RenderPipeline>,
     vbuf: wgpu::Buffer,
     vcount: u32,
 
@@ -25,8 +24,6 @@ pub struct Renderer {
 
     pipeline_cache: PipelineCache,
     pipeline_layout: wgpu::PipelineLayout,
-    shader_src: WgslSource,
-    current_overrides: Overrides,
 }
 
 impl Renderer {
@@ -95,12 +92,6 @@ impl Renderer {
             }],
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("pipeline_layout"),
-            bind_group_layouts: &[&camera_bgl],
-            push_constant_ranges: &[],
-        });
-
         let cam_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("camera_ubo"),
             size: std::mem::size_of::<CameraUBO>() as u64,
@@ -118,36 +109,13 @@ impl Renderer {
         });
 
         // Shader + pipeline
-        let shader_src = WgslSource {
-            name: "triangle.wgsl",
-            code: include_str!("../shaders/triangle.wgsl"),
-        };
-
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pipeline_layout"),
             bind_group_layouts: &[&camera_bgl],
             push_constant_ranges: &[],
         });
 
-        let state = RenderState {
-            format,
-            depth: true,
-            msaa: 1,
-            topo: Topology::TriangleList,
-        };
-
-        let mut pipeline_cache = PipelineCache::new();
-        let overrides = Overrides::default(); // startowo bez fog/tint
-        let key = ShaderKey::new(&shader_src, state, &overrides);
-        let pipeline = pipeline_cache.get_or_create(
-            key,
-            &device,
-            &pipeline_layout,
-            &shader_src,
-            &state,
-            &overrides,
-            &[Vertex::layout()]
-        ).clone();
+        let pipeline_cache = PipelineCache::new();
 
         // Vertex buffer
         let verts: [Vertex; 3] = [
@@ -164,15 +132,15 @@ impl Renderer {
 
         let vcount = verts.len() as u32;
 
+        
         Self {
             surface, device, queue, config,
-            pipeline, vbuf, vcount,
+            pipeline: None,
+            vbuf, vcount,
             depth_view, cam_buf, cam_bg,
             camera,
             pipeline_cache,
             pipeline_layout,
-            shader_src,
-            current_overrides: overrides,
         }
     }
 
@@ -208,7 +176,12 @@ impl Renderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            rp.set_pipeline(&self.pipeline);
+            if let Some(ref p) = self.pipeline {
+                rp.set_pipeline(p);
+                rp.set_bind_group(0, &self.cam_bg, &[]);
+                rp.set_vertex_buffer(0, self.vbuf.slice(..));
+                rp.draw(0..self.vcount, 0..1);
+            }
             rp.set_bind_group(0, &self.cam_bg, &[]);
             rp.set_vertex_buffer(0, self.vbuf.slice(..));
             rp.draw(0..self.vcount, 0..1);
@@ -246,7 +219,12 @@ impl Renderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            rp.set_pipeline(&self.pipeline);
+            if let Some(ref p) = self.pipeline {
+                rp.set_pipeline(p);
+                rp.set_bind_group(0, &self.cam_bg, &[]);
+                rp.set_vertex_buffer(0, self.vbuf.slice(..));
+                rp.draw(0..self.vcount, 0..1);
+            }
             rp.set_bind_group(0, &self.cam_bg, &[]);
             rp.set_vertex_buffer(0, self.vbuf.slice(..));
             rp.draw(0..self.vcount, 0..1);
@@ -265,27 +243,48 @@ impl Renderer {
         self.queue.write_buffer(&self.cam_buf, 0, bytemuck::bytes_of(&ubo));
     }
 
-    pub fn rebuild_pipeline(&mut self, overrides: Overrides, topo: Topology) {
-        self.current_overrides = overrides.clone();
-
-        let state = RenderState {
+    pub fn rebuild_pipeline(
+        &mut self,
+        shader_src: &shader_core::WgslSource,
+        overrides: shader_core::Overrides,
+        topo: shader_core::Topology,
+    ) {
+        let state = shader_core::RenderState {
             format: self.config.format,
             depth: true,
             msaa: 1,
             topo,
         };
-        let key = ShaderKey::new(&self.shader_src, state, &self.current_overrides);
-
+        let key = shader_core::ShaderKey::new(shader_src, state, &overrides);
         let p = self.pipeline_cache.get_or_create(
             key,
             &self.device,
             &self.pipeline_layout,
-            &self.shader_src,
+            shader_src,
             &state,
-            &self.current_overrides,
+            &overrides,
             &[crate::types::Vertex::layout()],
         ).clone();
+        self.pipeline = Some(p);
+    }
 
-        self.pipeline = p;
+    pub fn build_pipeline(
+        &mut self,
+        shader_src: &shader_core::WgslSource,
+        state: &shader_core::RenderState<wgpu::TextureFormat>,
+        overrides: &shader_core::Overrides,
+        vertex_layouts: &[wgpu::VertexBufferLayout<'static>],
+    ) {
+        let key = shader_core::ShaderKey::new(shader_src, *state, overrides);
+        let p = self.pipeline_cache.get_or_create(
+            key,
+            &self.device,
+            &self.pipeline_layout,
+            shader_src,
+            state,
+            overrides,
+            vertex_layouts,
+        ).clone();
+        self.pipeline = Some(p);
     }
 }

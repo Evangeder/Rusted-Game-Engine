@@ -15,6 +15,7 @@ struct Demo {
     angle: f32,
     last_frame: Instant,
     fog: bool,
+    shader_src: Option<shader_core::WgslSource>,
 }
 
 impl Demo {
@@ -27,7 +28,8 @@ impl Demo {
             rot_speed: 1.0,
             angle: 0.0,
             last_frame: Instant::now(),
-            fog: false,
+            fog: true,
+            shader_src: None,
         }
     }
 }
@@ -42,19 +44,34 @@ impl ApplicationHandler for Demo {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         self.inner.resumed(el);
         el.set_control_flow(ControlFlow::Poll);
+
         if let Some(win) = &self.inner.window {
             let mut renderer = gfx_wgpu::Renderer::new(win);
+
+            let src = shader_core::WgslSource {
+                name: "triangle.wgsl",
+                code: include_str!("../shaders/triangle.wgsl"),
+            };
+
+            let state = shader_core::RenderState {
+                format: renderer.config.format,
+                depth: true,
+                msaa: 1,
+                topo: shader_core::Topology::TriangleList,
+            };
+
             let mut ov = shader_core::Overrides::default();
             ov.set_bool("USE_FOG", true);
             ov.set_f32("TINT_R", 1.0);
             ov.set_f32("TINT_G", 0.9);
             ov.set_f32("TINT_B", 0.9);
-            renderer.rebuild_pipeline(ov, shader_core::Topology::TriangleList);
+
+            renderer.build_pipeline(&src, &state, &ov, &[gfx_wgpu::Vertex::layout()]);
+
+            self.shader_src = Some(src);
+
             let ui = gfx_wgpu::UiLayer::new(
-                win,
-                &renderer.device,
-                &renderer.queue,
-                renderer.config.format
+                win, &renderer.device, &renderer.queue, renderer.config.format
             );
             self.ui = Some(ui);
             self.renderer = Some(renderer);
@@ -96,12 +113,18 @@ impl ApplicationHandler for Demo {
                     });
 
                     if apply_overrides {
-                        let mut ov = shader_core::Overrides::default();
-                        ov.set_bool("USE_FOG", self.fog);
-                        ov.set_f32("TINT_R", 1.0);
-                        ov.set_f32("TINT_G", 0.9);
-                        ov.set_f32("TINT_B", 0.9);
-                        renderer.rebuild_pipeline(ov, shader_core::Topology::TriangleList);
+                        let mut new_ov = shader_core::Overrides::default();
+                        new_ov.set_bool("USE_FOG", self.fog);
+                        new_ov.set_f32("TINT_R", 1.0);
+                        new_ov.set_f32("TINT_G", 0.9);
+                        new_ov.set_f32("TINT_B", 0.9);
+
+                        let src = match &self.shader_src {
+                            Some(s) => s,
+                            None => panic!("shader_src not set")
+                        };
+
+                        renderer.rebuild_pipeline(src, new_ov, shader_core::Topology::TriangleList);
                     }
 
                     self.rot_speed = local_speed;
