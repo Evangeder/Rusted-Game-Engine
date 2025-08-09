@@ -5,22 +5,17 @@ use crate::{Camera, CameraUBO};
 use crate::depth::create_depth_view;
 use crate::types::{Vertex, GResult};
 use crate::pipeline_cache::PipelineCache;
+use crate::context::GfxContext;
+use crate::camera_bind::CameraBind;
 
 pub struct Renderer {
-    pub surface: wgpu::Surface<'static>,
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
-    pub config: wgpu::SurfaceConfiguration,
+    pub ctx: GfxContext,
 
     pipeline: Option<wgpu::RenderPipeline>,
     vbuf: wgpu::Buffer,
     vcount: u32,
 
-    depth_view: wgpu::TextureView,
-    cam_buf: wgpu::Buffer,
-    cam_bg: wgpu::BindGroup,
-
-    camera: Camera,
+    cam: CameraBind,
 
     pipeline_cache: PipelineCache,
     pipeline_layout: wgpu::PipelineLayout,
@@ -28,35 +23,17 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new(window: &winit::window::Window) -> Self {
-        // Instance and surface
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let surface = unsafe {
-            instance
-                .create_surface_unsafe(
-                    wgpu::SurfaceTargetUnsafe::from_window(window).expect("get raw window handle")
-                )
-                .expect("create surface")
-        };
-
+        let ctx = GfxContext::new(window);
+        
         // Adapter + device
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        let adapter = pollster::block_on(ctx.instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
+            compatible_surface: Some(&ctx.surface),
             force_fallback_adapter: false,
         })).expect("No adapter found");
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                memory_hints: Default::default(),
-                trace: wgpu::Trace::Off,
-            }
-        )).expect("request_device failed");
-
         // Swapchain config
-        let caps = surface.get_capabilities(&adapter);
+        let caps = ctx.surface.get_capabilities(&adapter);
         let format = caps.formats.iter().copied().find(|f| f.is_srgb()).unwrap_or(caps.formats[0]);
 
         let size = window.inner_size();
@@ -70,48 +47,14 @@ impl Renderer {
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
-        surface.configure(&device, &config);
+        ctx.surface.configure(&ctx.device, &config);
 
-        // Depth
-        let depth_view = create_depth_view(&device, config.width, config.height);
-
-        // Camera: instance + BGL + BG + UBO
-        let camera = Camera::new(Vec3::new(1.5, 1.5, 2.5), Vec3::ZERO);
-
-        let camera_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("camera_bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-
-        let cam_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("camera_ubo"),
-            size: std::mem::size_of::<CameraUBO>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let cam_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("camera_bg"),
-            layout: &camera_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: cam_buf.as_entire_binding(),
-            }],
-        });
+        let cam = CameraBind::new(&ctx.device);
 
         // Shader + pipeline
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let pipeline_layout = ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pipeline_layout"),
-            bind_group_layouts: &[&camera_bgl],
+            bind_group_layouts: &[&cam.bgl],
             push_constant_ranges: &[],
         });
 
@@ -124,7 +67,7 @@ impl Renderer {
             Vertex { pos: [ 0.0,  0.6], col: [0.2, 0.2, 1.0] },
         ];
 
-        let vbuf = device.create_buffer_init(&BufferInitDescriptor {
+        let vbuf = ctx.device.create_buffer_init(&BufferInitDescriptor {
             label: Some("vbuf"),
             contents: bytemuck::cast_slice(&verts),
             usage: wgpu::BufferUsages::VERTEX,
@@ -132,13 +75,11 @@ impl Renderer {
 
         let vcount = verts.len() as u32;
 
-        
         Self {
-            surface, device, queue, config,
+            ctx,
             pipeline: None,
             vbuf, vcount,
-            depth_view, cam_buf, cam_bg,
-            camera,
+            cam,
             pipeline_cache,
             pipeline_layout,
         }
@@ -146,16 +87,16 @@ impl Renderer {
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width == 0 || new_size.height == 0 { return; }
-        self.config.width = new_size.width;
-        self.config.height = new_size.height;
-        self.surface.configure(&self.device, &self.config);
-        self.depth_view = create_depth_view(&self.device, self.config.width, self.config.height);
+        self.ctx.config.width = new_size.width;
+        self.ctx.config.height = new_size.height;
+        self.ctx.surface.configure(&self.ctx.device, &self.ctx.config);
+        self.ctx.depth_view = create_depth_view(&self.ctx.device, self.ctx.config.width, self.ctx.config.height);
     }
 
     pub fn render(&mut self) -> GResult<()> {
-        let frame = self.surface.get_current_texture()?;
+        let frame = self.ctx.surface.get_current_texture()?;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("encoder") });
+        let mut encoder = self.ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("encoder") });
 
         {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -169,7 +110,7 @@ impl Renderer {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
+                    view: &self.ctx.depth_view,
                     depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
                     stencil_ops: None,
                 }),
@@ -178,16 +119,13 @@ impl Renderer {
             });
             if let Some(ref p) = self.pipeline {
                 rp.set_pipeline(p);
-                rp.set_bind_group(0, &self.cam_bg, &[]);
+                rp.set_bind_group(0, &self.cam.bind_group, &[]);
                 rp.set_vertex_buffer(0, self.vbuf.slice(..));
                 rp.draw(0..self.vcount, 0..1);
             }
-            rp.set_bind_group(0, &self.cam_bg, &[]);
-            rp.set_vertex_buffer(0, self.vbuf.slice(..));
-            rp.draw(0..self.vcount, 0..1);
         }
 
-        self.queue.submit(std::iter::once(encoder.finish()));
+        self.ctx.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
         Ok(())
     }
@@ -196,9 +134,9 @@ impl Renderer {
     where
         F: FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView),
     {
-        let frame = self.surface.get_current_texture()?;
+        let frame = self.ctx.surface.get_current_texture()?;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("encoder") });
+        let mut encoder = self.ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("encoder") });
 
         {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -212,7 +150,7 @@ impl Renderer {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
+                    view: &self.ctx.depth_view,
                     depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
                     stencil_ops: None,
                 }),
@@ -221,26 +159,28 @@ impl Renderer {
             });
             if let Some(ref p) = self.pipeline {
                 rp.set_pipeline(p);
-                rp.set_bind_group(0, &self.cam_bg, &[]);
+                rp.set_bind_group(0, &self.cam.bind_group, &[]);
                 rp.set_vertex_buffer(0, self.vbuf.slice(..));
                 rp.draw(0..self.vcount, 0..1);
             }
-            rp.set_bind_group(0, &self.cam_bg, &[]);
+            rp.set_bind_group(0, &self.cam.bind_group, &[]);
             rp.set_vertex_buffer(0, self.vbuf.slice(..));
             rp.draw(0..self.vcount, 0..1);
         }
 
         extra_pass(&mut encoder, &view);
 
-        self.queue.submit(std::iter::once(encoder.finish()));
+        self.ctx.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
         Ok(())
     }
 
-    pub fn update_camera(&mut self, t: f32) {
-        let aspect = self.config.width as f32 / self.config.height as f32;
-        let ubo = self.camera.make_mvp(aspect, t);
-        self.queue.write_buffer(&self.cam_buf, 0, bytemuck::bytes_of(&ubo));
+    pub fn aspect(&self) -> f32 {
+        self.ctx.config.width as f32 / self.ctx.config.height as f32
+    }
+
+    pub fn update_camera_ubo(&mut self, ubo: &crate::CameraUBO) {
+        self.ctx.queue.write_buffer(&self.cam.buffer, 0, bytemuck::bytes_of(ubo));
     }
 
     pub fn rebuild_pipeline(
@@ -250,7 +190,7 @@ impl Renderer {
         topo: shader_core::Topology,
     ) {
         let state = shader_core::RenderState {
-            format: self.config.format,
+            format: self.ctx.config.format,
             depth: true,
             msaa: 1,
             topo,
@@ -258,7 +198,7 @@ impl Renderer {
         let key = shader_core::ShaderKey::new(shader_src, state, &overrides);
         let p = self.pipeline_cache.get_or_create(
             key,
-            &self.device,
+            &self.ctx.device,
             &self.pipeline_layout,
             shader_src,
             &state,
@@ -278,7 +218,7 @@ impl Renderer {
         let key = shader_core::ShaderKey::new(shader_src, *state, overrides);
         let p = self.pipeline_cache.get_or_create(
             key,
-            &self.device,
+            &self.ctx.device,
             &self.pipeline_layout,
             shader_src,
             state,

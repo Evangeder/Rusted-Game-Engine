@@ -8,6 +8,7 @@ platform = { path = "../../crates/platform" }
 gfx-wgpu = { path = "../../crates/gfx-wgpu" }
 shader-core = { path = "../../crates/shader-core" }
 winit = "0.30.12"
+glam = "0.30.5"
 
 [[bin]]
 name = "triangle"

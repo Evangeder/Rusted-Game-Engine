@@ -12,6 +12,7 @@ struct Demo {
     renderer: Option<gfx_wgpu::Renderer>,
     ui: Option<gfx_wgpu::UiLayer>,
     rot_speed: f32,
+    camera: gfx_wgpu::Camera,
     angle: f32,
     last_frame: Instant,
     fog: bool,
@@ -26,6 +27,7 @@ impl Demo {
             renderer: None,
             ui: None,
             rot_speed: 1.0,
+            camera: gfx_wgpu::Camera::new(glam::f32::Vec3::new(1.5, 1.5, 2.5), glam::f32::Vec3::ZERO),
             angle: 0.0,
             last_frame: Instant::now(),
             fog: true,
@@ -54,7 +56,7 @@ impl ApplicationHandler for Demo {
             };
 
             let state = shader_core::RenderState {
-                format: renderer.config.format,
+                format: renderer.ctx.config.format,
                 depth: true,
                 msaa: 1,
                 topo: shader_core::Topology::TriangleList,
@@ -71,11 +73,14 @@ impl ApplicationHandler for Demo {
             self.shader_src = Some(src);
 
             let ui = gfx_wgpu::UiLayer::new(
-                win, &renderer.device, &renderer.queue, renderer.config.format
+                win, &renderer.ctx.device, &renderer.ctx.queue, renderer.ctx.config.format
             );
             self.ui = Some(ui);
             self.renderer = Some(renderer);
-            self.renderer.as_mut().unwrap().update_camera(0.0);
+
+            let aspect = self.renderer.as_ref().unwrap().aspect();
+            let ubo = self.camera.make_mvp(aspect, 0.0);
+            self.renderer.as_mut().unwrap().update_camera_ubo(&ubo);
             win.request_redraw();
         }
     }
@@ -94,8 +99,8 @@ impl ApplicationHandler for Demo {
                     self.last_frame = now;
 
                     let mut local_speed = self.rot_speed;
-                    let device = renderer.device.clone();
-                    let queue  = renderer.queue.clone();
+                    let device = renderer.ctx.device.clone();
+                    let queue  = renderer.ctx.queue.clone();
 
                     let mut apply_overrides = false;
 
@@ -129,7 +134,10 @@ impl ApplicationHandler for Demo {
 
                     self.rot_speed = local_speed;
                     self.angle += delta_time * self.rot_speed;
-                    renderer.update_camera(self.angle);
+
+                    let aspect = renderer.aspect();
+                    let ubo = self.camera.make_mvp(aspect, self.angle);
+                    renderer.update_camera_ubo(&ubo);
                 }
 
                 WindowEvent::Occluded(false) | WindowEvent::Focused(true) => win.request_redraw(),
