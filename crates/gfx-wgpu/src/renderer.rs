@@ -1,4 +1,4 @@
-use glam::Vec3; // do inicjalizacji kamery
+use glam::Vec3;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::{Camera, CameraUBO};
@@ -189,7 +189,6 @@ impl Renderer {
                 label: Some("triangle"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
-                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.05, g: 0.06, b: 0.1, a: 1.0 }),
@@ -215,9 +214,49 @@ impl Renderer {
         Ok(())
     }
 
+    pub fn render_with<F>(&mut self, mut extra_pass: F) -> GResult<()>
+    where
+        F: FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView),
+    {
+        let frame = self.surface.get_current_texture()?;
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("encoder") });
+
+        {
+            let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("triangle"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.05, g: 0.06, b: 0.1, a: 1.0 }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            rp.set_pipeline(&self.pipeline);
+            rp.set_bind_group(0, &self.cam_bg, &[]);
+            rp.set_vertex_buffer(0, self.vbuf.slice(..));
+            rp.draw(0..self.vcount, 0..1);
+        }
+
+        extra_pass(&mut encoder, &view);
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+        frame.present();
+        Ok(())
+    }
+
     pub fn update_camera(&mut self, t: f32) {
         let aspect = self.config.width as f32 / self.config.height as f32;
-        let ubo = self.camera.make_mvp(aspect, t); // <<<< kamera liczy UBO
+        let ubo = self.camera.make_mvp(aspect, t);
         self.queue.write_buffer(&self.cam_buf, 0, bytemuck::bytes_of(&ubo));
     }
 }

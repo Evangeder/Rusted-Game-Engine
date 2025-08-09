@@ -5,3 +5,6 @@ members = [
   "demos/triangle",
 ]
 resolver = "2"
+
+[workspace.dependencies]
+wgpu = "25.0.2"

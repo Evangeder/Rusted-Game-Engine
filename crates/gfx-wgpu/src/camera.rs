@@ -29,7 +29,7 @@ impl Camera {
     }
 
     pub fn make_mvp(&self, aspect: f32, t: f32) -> CameraUBO {
-        let proj = Mat4::perspective_rh_gl(self.fov_y, aspect, self.z_near, self.z_far);
+        let proj = Mat4::perspective_rh(self.fov_y, aspect, self.z_near, self.z_far);
         let view = Mat4::look_at_rh(self.position, self.target, self.up);
         let model = Mat4::from_rotation_y(t);
         CameraUBO { mvp: (proj * view * model).to_cols_array_2d() }

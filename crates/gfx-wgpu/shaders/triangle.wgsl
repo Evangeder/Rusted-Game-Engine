@@ -1,23 +1,29 @@
-struct Camera {
-  mvp: mat4x4<f32>,
+struct CameraUBO {
+    mvp: mat4x4<f32>,
 };
-@group(0) @binding(0) var<uniform> u_camera: Camera;
+@group(0) @binding(0)
+var<uniform> cam: CameraUBO;
 
-struct VSOut {
-  @builtin(position) pos: vec4<f32>,
-  @location(0) color: vec3<f32>,
+struct VsIn {
+    @location(0) pos: vec2<f32>,
+    @location(1) col: vec3<f32>,
+};
+
+struct VsOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) col: vec3<f32>,
 };
 
 @vertex
-fn vs_main(@location(0) a_pos: vec2<f32>, @location(1) a_col: vec3<f32>) -> VSOut {
-  var out: VSOut;
-  let p = vec4<f32>(a_pos, 0.0, 1.0);
-  out.pos = u_camera.mvp * p;
-  out.color = a_col;
-  return out;
+fn vs_main(in: VsIn) -> VsOut {
+    var out: VsOut;
+    let p = vec4<f32>(in.pos, 0.0, 1.0);
+    out.pos = cam.mvp * p;    // <— używamy kamery
+    out.col = in.col;
+    return out;
 }
 
 @fragment
-fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
-  return vec4<f32>(in.color, 1.0);
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(in.col, 1.0);
 }
