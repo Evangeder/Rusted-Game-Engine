@@ -1,7 +1,9 @@
 [workspace]
 members = [
   "crates/platform",
+  "crates/engine-core",
   "crates/gfx-wgpu",
+  "crates/ui-core",
   "crates/shader-core",
   "demos/triangle",
 ]

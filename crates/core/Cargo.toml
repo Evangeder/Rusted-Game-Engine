@@ -1,7 +1,0 @@
-[workspace]
-members = [
-  "crates/platform",
-  "crates/gfx-wgpu",
-  "demos/triangle",
-]
-resolver = "2"

@@ -1,4 +1,4 @@
-use crate::CameraUBO;
+use engine_core::CameraUBO;
 
 pub struct CameraBind {
     pub bgl: wgpu::BindGroupLayout,

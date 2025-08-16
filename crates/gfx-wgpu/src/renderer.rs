@@ -1,5 +1,4 @@
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
-
 use crate::depth::create_depth_view;
 use crate::types::{Vertex, GResult};
 use crate::pipeline_cache::PipelineCache;
@@ -17,6 +16,13 @@ pub struct Renderer {
 
     pipeline_cache: PipelineCache,
     pipeline_layout: wgpu::PipelineLayout,
+
+    ui: Box<dyn ui_core::UiBackend<
+        Device = wgpu::Device,
+        Queue = wgpu::Queue,
+        Encoder = wgpu::CommandEncoder,
+        View = wgpu::TextureView
+    >>,
 }
 
 impl Renderer {
@@ -73,6 +79,8 @@ impl Renderer {
 
         let vcount = verts.len() as u32;
 
+        let ui = Box::new(crate::ui::UiLayer::new(window, &ctx.device, &ctx.queue, ctx.config.format));
+
         Self {
             ctx,
             pipeline: None,
@@ -80,7 +88,12 @@ impl Renderer {
             cam,
             pipeline_cache,
             pipeline_layout,
+            ui
         }
+    }
+
+    pub fn ui_event(&mut self, window: &winit::window::Window, id: winit::window::WindowId, event: &winit::event::WindowEvent) {
+        self.ui.handle_window_event(window, id, event);
     }
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
@@ -167,6 +180,57 @@ impl Renderer {
         }
 
         extra_pass(&mut encoder, &view);
+
+        self.ctx.queue.submit(std::iter::once(encoder.finish()));
+        frame.present();
+        Ok(())
+    }
+
+    pub fn render_with_ui<F>(&mut self, window: &winit::window::Window, mut ui_build: F) -> GResult<()>
+    where
+        F: for<'a> FnMut(&'a dyn ui_core::Ui),
+    {
+        let frame = self.ctx.surface.get_current_texture()?;
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self.ctx.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("encoder") }
+        );
+
+        {
+            let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("triangle"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.05, g: 0.06, b: 0.1, a: 1.0 }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.ctx.depth_view,
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            if let Some(ref p) = self.pipeline {
+                rp.set_pipeline(p);
+                rp.set_bind_group(0, &self.cam.bind_group, &[]);
+                rp.set_vertex_buffer(0, self.vbuf.slice(..));
+                rp.draw(0..self.vcount, 0..1);
+            }
+        }
+
+        self.ui.build_and_render(
+            window,
+            &self.ctx.device,
+            &self.ctx.queue,
+            &mut encoder,
+            &view,
+            &mut ui_build,
+        );
 
         self.ctx.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
